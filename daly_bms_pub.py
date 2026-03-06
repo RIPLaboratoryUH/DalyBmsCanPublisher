@@ -5,7 +5,7 @@ import can
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Float32
 
 CHANNEL = "can0"
 PC   = 0x40
@@ -37,18 +37,23 @@ class DalyBmsCanPublisher(Node):
 
         self.declare_parameter('channel', CHANNEL)
         self.declare_parameter('topic', '/battery/status')
+        self.declare_parameter('current_topic', '/battery/current')
         self.declare_parameter('period_s', 1.0)
 
         channel = self.get_parameter('channel').get_parameter_value().string_value
-        topic   = self.get_parameter('topic').get_parameter_value().string_value
-        period  = self.get_parameter('period_s').get_parameter_value().double_value
+        topic = self.get_parameter('topic').get_parameter_value().string_value
+        current_topic = self.get_parameter('current_topic').get_parameter_value().string_value
+        period = self.get_parameter('period_s').get_parameter_value().double_value
 
         self.bus = can.interface.Bus(channel=channel, bustype="socketcan")
 
         self.pub = self.create_publisher(String, topic, 10)
+        self.current_pub = self.create_publisher(Float32, current_topic, 10)
         self.timer = self.create_timer(period, self.tick)
 
-        self.get_logger().info(f"Publishing on {topic} every {period:.3f}s (CAN: {channel})")
+        self.get_logger().info(
+            f"Publishing on {topic} and {current_topic} every {period:.3f}s (CAN: {channel})"
+        )
 
         # cache last-known values
         self.last_cells = []
@@ -112,7 +117,7 @@ class DalyBmsCanPublisher(Node):
         voltage = u16be(d, 0) * 0.1
 
         raw_i = u16be(d, CURRENT_WORD_OFFSET)
-        amps  = (raw_i - CURRENT_ZERO_OFFSET) * CURRENT_SCALE_A_PER_LSB
+        amps = (raw_i - CURRENT_ZERO_OFFSET) * CURRENT_SCALE_A_PER_LSB
 
         soc = u16be(d, 6) * 0.1
         return voltage, amps, soc
@@ -143,6 +148,10 @@ class DalyBmsCanPublisher(Node):
             return
 
         v, a, soc = self.decode_0x90(bytes(m90.data))
+
+        current_msg = Float32()
+        current_msg.data = float(a)
+        self.current_pub.publish(current_msg)
 
         # One extra per tick to reduce BMS load
         which = self.extras[self.extra_idx]
@@ -198,5 +207,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
